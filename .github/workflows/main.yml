@@ -1,0 +1,452 @@
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Generate project files
+        run: |
+          cat > settings.gradle <<'END_OF_FILE'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "TVStream"
+          include ':app'
+          END_OF_FILE
+          cat > build.gradle <<'END_OF_FILE'
+          plugins { id 'com.android.application' version '8.5.2' apply false }
+          END_OF_FILE
+          cat > gradle.properties <<'END_OF_FILE'
+          org.gradle.jvmargs=-Xmx2g
+          android.useAndroidX=false
+          END_OF_FILE
+          mkdir -p app
+          cat > app/build.gradle <<'END_OF_FILE'
+          plugins { id 'com.android.application' }
+          android {
+              namespace 'id.nakal.tvstream'
+              compileSdk 34
+              defaultConfig {
+                  applicationId 'id.nakal.tvstream'
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName '1.0'
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          END_OF_FILE
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'END_OF_FILE'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+              <uses-feature android:name="android.software.leanback" android:required="false" />
+              <application
+                  android:label="TV Stream"
+                  android:icon="@drawable/icon"
+                  android:banner="@drawable/banner"
+                  android:theme="@style/AppTheme"
+                  android:usesCleartextTraffic="true"
+                  android:hardwareAccelerated="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation|smallestScreenSize|screenLayout|uiMode"
+                      android:screenOrientation="landscape">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                          <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          END_OF_FILE
+          mkdir -p app/src/main/res/values
+          cat > app/src/main/res/values/styles.xml <<'END_OF_FILE'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+                  <item name="android:windowBackground">@android:color/black</item>
+              </style>
+          </resources>
+          END_OF_FILE
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/icon.xml <<'END_OF_FILE'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <path android:fillColor="#E50914" android:pathData="M0,0h108v108h-108z" />
+              <path android:fillColor="#FFFFFF" android:pathData="M42,30L42,78L82,54z" />
+          </vector>
+          END_OF_FILE
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/banner.xml <<'END_OF_FILE'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="320dp" android:height="180dp"
+              android:viewportWidth="320" android:viewportHeight="180">
+              <path android:fillColor="#E50914" android:pathData="M0,0h320v180h-320z" />
+              <path android:fillColor="#FFFFFF" android:pathData="M130,50L130,130L200,90z" />
+          </vector>
+          END_OF_FILE
+          mkdir -p app/src/main/java/id/nakal/tvstream
+          cat > app/src/main/java/id/nakal/tvstream/MainActivity.java <<'END_OF_FILE'
+          package id.nakal.tvstream;
+
+          import android.app.Activity;
+          import android.app.AlertDialog;
+          import android.content.Context;
+          import android.content.SharedPreferences;
+          import android.graphics.Bitmap;
+          import android.graphics.Canvas;
+          import android.graphics.Paint;
+          import android.os.Bundle;
+          import android.os.Handler;
+          import android.os.Message;
+          import android.os.SystemClock;
+          import android.text.InputType;
+          import android.view.InputDevice;
+          import android.view.KeyEvent;
+          import android.view.MotionEvent;
+          import android.view.View;
+          import android.view.ViewGroup;
+          import android.view.WindowManager;
+          import android.view.inputmethod.EditorInfo;
+          import android.webkit.CookieManager;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebResourceResponse;
+          import android.webkit.WebSettings;
+          import android.webkit.WebStorage;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import android.widget.EditText;
+          import android.widget.FrameLayout;
+
+          import java.io.ByteArrayInputStream;
+
+          public class MainActivity extends Activity {
+
+              static final String DEFAULT_URL = "https://movie.nakal.id";
+
+              static final String[] BLOCKED = {
+                  "doubleclick.net", "googlesyndication.com", "googleadservices.com", "adservice.google.com",
+                  "adnxs.com", "taboola.com", "outbrain.com", "popads.net", "popcash.net",
+                  "propellerads.com", "propellerclick.com", "exoclick.com", "exosrv.com", "juicyads.com",
+                  "trafficjunky.com", "adsterra.com", "highperformanceformat.com", "profitablegatecpm.com",
+                  "onclickads.net", "onclasrv.com", "clickadu.com", "hilltopads.net", "mgid.com",
+                  "revcontent.com", "adcash.com", "a-ads.com", "admaven.com", "ad-maven.com",
+                  "bidvertiser.com", "yllix.com", "adskeeper.com", "ero-advertising.com", "tsyndicate.com",
+                  "pushwhy.com", "rtbsystem.com", "adspyglass.com", "monetag.com", "clickaine.com"
+              };
+
+              SharedPreferences prefs;
+              FrameLayout root;
+              WebView web;
+              CursorView cursor;
+              View customView;
+              WebChromeClient.CustomViewCallback customCb;
+              boolean cursorMode = true;
+              boolean pageDone = false;
+              float cx, cy;
+              final Handler handler = new Handler();
+              final Runnable hideCursor = new Runnable() {
+                  public void run() { cursor.setVisibility(View.INVISIBLE); }
+              };
+
+              static class CursorView extends View {
+                  float x, y;
+                  final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+                  final Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG);
+                  CursorView(Context c) {
+                      super(c);
+                      fill.setColor(0xCCFFFFFF);
+                      ring.setColor(0xFF000000);
+                      ring.setStyle(Paint.Style.STROKE);
+                      ring.setStrokeWidth(4f);
+                      setFocusable(false);
+                  }
+                  @Override protected void onDraw(Canvas c) {
+                      float r = 10 * getResources().getDisplayMetrics().density;
+                      c.drawCircle(x, y, r, fill);
+                      c.drawCircle(x, y, r, ring);
+                  }
+              }
+
+              @Override
+              protected void onCreate(Bundle b) {
+                  super.onCreate(b);
+                  getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                  prefs = getSharedPreferences("p", MODE_PRIVATE);
+
+                  root = new FrameLayout(this);
+                  web = new WebView(this);
+                  cursor = new CursorView(this);
+                  root.addView(web, new FrameLayout.LayoutParams(-1, -1));
+                  root.addView(cursor, new FrameLayout.LayoutParams(-1, -1));
+                  setContentView(root);
+                  setupWeb();
+
+                  root.post(new Runnable() {
+                      public void run() {
+                          cx = root.getWidth() / 2f;
+                          cy = root.getHeight() / 2f;
+                          cursor.x = cx; cursor.y = cy;
+                          cursor.setVisibility(View.INVISIBLE);
+                      }
+                  });
+
+                  String saved = prefs.getString("url", null);
+                  if (saved == null) showUrlDialog(true); else go(saved);
+              }
+
+              void setupWeb() {
+                  WebSettings s = web.getSettings();
+                  s.setJavaScriptEnabled(true);
+                  s.setDomStorageEnabled(true);
+                  s.setMediaPlaybackRequiresUserGesture(false);
+                  s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+                  s.setUseWideViewPort(true);
+                  s.setLoadWithOverviewMode(true);
+                  s.setSupportMultipleWindows(true);
+                  s.setJavaScriptCanOpenWindowsAutomatically(false);
+                  s.setUserAgentString(s.getUserAgentString().replace("; wv", ""));
+                  CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
+                  web.setFocusable(true);
+                  web.setBackgroundColor(0xFF000000);
+
+                  web.setWebViewClient(new WebViewClient() {
+                      @Override public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest r) {
+                          String h = r.getUrl().getHost();
+                          if (isBlocked(h)) {
+                              return new WebResourceResponse("text/plain", "utf-8", new ByteArrayInputStream(new byte[0]));
+                          }
+                          return null;
+                      }
+                      @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
+                          String scheme = r.getUrl().getScheme();
+                          if (scheme == null || !(scheme.equals("http") || scheme.equals("https"))) return true;
+                          if (isBlocked(r.getUrl().getHost())) return true;
+                          if (pageDone && r.isForMainFrame() && !r.hasGesture()) {
+                              String cur = v.getUrl() == null ? null : android.net.Uri.parse(v.getUrl()).getHost();
+                              if (cur != null && !strip(cur).equals(strip(r.getUrl().getHost()))) return true;
+                          }
+                          pageDone = false;
+                          return false;
+                      }
+                      @Override public void onPageFinished(WebView v, String url) { pageDone = true; }
+                  });
+
+                  web.setWebChromeClient(new WebChromeClient() {
+                      @Override public boolean onCreateWindow(WebView v, boolean d, boolean g, Message m) { return false; }
+                      @Override public void onShowCustomView(View v, CustomViewCallback cb) {
+                          if (customView != null) { cb.onCustomViewHidden(); return; }
+                          customView = v; customCb = cb;
+                          root.addView(v, new FrameLayout.LayoutParams(-1, -1));
+                          web.setVisibility(View.INVISIBLE);
+                          cursor.setVisibility(View.INVISIBLE);
+                      }
+                      @Override public void onHideCustomView() { hideCustom(); }
+                  });
+              }
+
+              static String strip(String h) { return h == null ? "" : (h.startsWith("www.") ? h.substring(4) : h); }
+
+              static boolean isBlocked(String h) {
+                  if (h == null) return false;
+                  h = h.toLowerCase();
+                  if (h.startsWith("ads.") || h.startsWith("adserver.")) return true;
+                  for (String b : BLOCKED) if (h.equals(b) || h.endsWith("." + b)) return true;
+                  return false;
+              }
+
+              void hideCustom() {
+                  if (customView == null) return;
+                  root.removeView(customView);
+                  customView = null;
+                  if (customCb != null) customCb.onCustomViewHidden();
+                  web.setVisibility(View.VISIBLE);
+                  web.requestFocus();
+              }
+
+              void go(String u) {
+                  u = u.trim();
+                  if (u.isEmpty()) return;
+                  if (!u.matches("(?i)^[a-z][a-z0-9+.-]*://.*")) u = "https://" + u;
+                  prefs.edit().putString("url", u).apply();
+                  pageDone = false;
+                  web.loadUrl(u);
+              }
+
+              void showUrlDialog(boolean first) {
+                  final EditText e = new EditText(this);
+                  e.setSingleLine(true);
+                  e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+                  e.setImeOptions(EditorInfo.IME_ACTION_GO);
+                  e.setText(prefs.getString("url", DEFAULT_URL));
+                  e.setSelection(e.getText().length());
+                  e.setPadding(48, 32, 48, 32);
+                  AlertDialog.Builder d = new AlertDialog.Builder(this)
+                      .setTitle("Enter site URL")
+                      .setView(e)
+                      .setPositiveButton("Go", (x, w) -> go(e.getText().toString()));
+                  if (first) d.setCancelable(false); else d.setNegativeButton("Cancel", null);
+                  d.show();
+              }
+
+              void showMenu() {
+                  String[] items = {
+                      "Change URL",
+                      "Reload",
+                      "Pointer mode: " + (cursorMode ? "ON (switch to focus mode)" : "OFF (switch to pointer)"),
+                      "Clear cookies & cache",
+                      "Exit app"
+                  };
+                  new AlertDialog.Builder(this).setTitle("Menu").setItems(items, (x, i) -> {
+                      if (i == 0) showUrlDialog(false);
+                      else if (i == 1) web.reload();
+                      else if (i == 2) {
+                          cursorMode = !cursorMode;
+                          if (!cursorMode) cursor.setVisibility(View.INVISIBLE);
+                          web.requestFocus();
+                      } else if (i == 3) {
+                          web.clearCache(true);
+                          CookieManager.getInstance().removeAllCookies(null);
+                          WebStorage.getInstance().deleteAllData();
+                      } else finish();
+                  }).show();
+              }
+
+              void js(String body) {
+                  web.evaluateJavascript("(function(){var v=document.querySelector('video');if(!v)return;" + body + "})()", null);
+              }
+
+              boolean videoKey(KeyEvent e) {
+                  if (e.getAction() != KeyEvent.ACTION_DOWN) return false;
+                  switch (e.getKeyCode()) {
+                      case KeyEvent.KEYCODE_DPAD_CENTER:
+                      case KeyEvent.KEYCODE_ENTER:
+                      case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+                      case KeyEvent.KEYCODE_MEDIA_PLAY:
+                      case KeyEvent.KEYCODE_MEDIA_PAUSE:
+                          js("if(v.paused)v.play();else v.pause();"); return true;
+                      case KeyEvent.KEYCODE_DPAD_LEFT:
+                      case KeyEvent.KEYCODE_MEDIA_REWIND:
+                          js("v.currentTime=Math.max(0,v.currentTime-10);"); return true;
+                      case KeyEvent.KEYCODE_DPAD_RIGHT:
+                      case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
+                          js("v.currentTime+=10;"); return true;
+                  }
+                  return false;
+              }
+
+              void move(int key, int rep) {
+                  float d = getResources().getDisplayMetrics().density;
+                  float step = (10 + Math.min(rep, 40) * 1.5f) * d;
+                  float dx = 0, dy = 0;
+                  if (key == KeyEvent.KEYCODE_DPAD_UP) dy = -step;
+                  if (key == KeyEvent.KEYCODE_DPAD_DOWN) dy = step;
+                  if (key == KeyEvent.KEYCODE_DPAD_LEFT) dx = -step;
+                  if (key == KeyEvent.KEYCODE_DPAD_RIGHT) dx = step;
+                  float w = root.getWidth(), h = root.getHeight(), edge = 24 * d;
+                  if (dy < 0 && cy <= edge) web.scrollBy(0, (int) (dy * 2));
+                  if (dy > 0 && cy >= h - edge) web.scrollBy(0, (int) (dy * 2));
+                  if (dx < 0 && cx <= edge) web.scrollBy((int) (dx * 2), 0);
+                  if (dx > 0 && cx >= w - edge) web.scrollBy((int) (dx * 2), 0);
+                  cx = Math.max(0, Math.min(w, cx + dx));
+                  cy = Math.max(0, Math.min(h, cy + dy));
+                  cursor.x = cx; cursor.y = cy;
+                  cursor.setVisibility(View.VISIBLE);
+                  cursor.invalidate();
+                  handler.removeCallbacks(hideCursor);
+                  handler.postDelayed(hideCursor, 4000);
+              }
+
+              void click() {
+                  final float x = cx, y = cy;
+                  final long t = SystemClock.uptimeMillis();
+                  MotionEvent down = MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, x, y, 0);
+                  down.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+                  web.dispatchTouchEvent(down);
+                  down.recycle();
+                  handler.postDelayed(() -> {
+                      MotionEvent up = MotionEvent.obtain(t, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0);
+                      up.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+                      web.dispatchTouchEvent(up);
+                      up.recycle();
+                  }, 60);
+                  cursor.setVisibility(View.VISIBLE);
+                  handler.removeCallbacks(hideCursor);
+                  handler.postDelayed(hideCursor, 4000);
+              }
+
+              @Override
+              public boolean dispatchKeyEvent(KeyEvent e) {
+                  int k = e.getKeyCode();
+                  if (k == KeyEvent.KEYCODE_BACK) return super.dispatchKeyEvent(e);
+                  if (k == KeyEvent.KEYCODE_MENU || k == KeyEvent.KEYCODE_SETTINGS || k == KeyEvent.KEYCODE_INFO) {
+                      if (e.getAction() == KeyEvent.ACTION_UP && customView == null) showMenu();
+                      return true;
+                  }
+                  if (customView != null) return videoKey(e) || super.dispatchKeyEvent(e);
+                  if (k == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE || k == KeyEvent.KEYCODE_MEDIA_PLAY
+                      || k == KeyEvent.KEYCODE_MEDIA_PAUSE || k == KeyEvent.KEYCODE_MEDIA_REWIND
+                      || k == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) {
+                      return videoKey(e);
+                  }
+                  if (cursorMode) {
+                      switch (k) {
+                          case KeyEvent.KEYCODE_DPAD_UP:
+                          case KeyEvent.KEYCODE_DPAD_DOWN:
+                          case KeyEvent.KEYCODE_DPAD_LEFT:
+                          case KeyEvent.KEYCODE_DPAD_RIGHT:
+                              if (e.getAction() == KeyEvent.ACTION_DOWN) move(k, e.getRepeatCount());
+                              return true;
+                          case KeyEvent.KEYCODE_DPAD_CENTER:
+                          case KeyEvent.KEYCODE_ENTER:
+                              if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) click();
+                              return true;
+                      }
+                  }
+                  return super.dispatchKeyEvent(e);
+              }
+
+              @Override
+              public void onBackPressed() {
+                  if (customView != null) hideCustom();
+                  else if (web.canGoBack()) web.goBack();
+                  else super.onBackPressed();
+              }
+
+              @Override protected void onPause() { super.onPause(); web.onPause(); }
+              @Override protected void onResume() { super.onResume(); web.onResume(); }
+          }
+          END_OF_FILE
+      - name: Build debug APK
+        run: gradle assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TVStream-apk
+          path: app/build/outputs/apk/debug/*.apk
